@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { requireGemini } from '@/lib/apiGuard';
 import { solveCaseWithContext } from '@/lib/gemini';
 import type { ClarifyingAnswer, Phase1Result } from '@/types/case';
 
@@ -8,27 +8,9 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    // Auth guard — verify user is authenticated
-    let user = null;
-    try {
-      const supabase = await createClient();
-      const { data, error: authError } = await supabase.auth.getUser();
-      if (authError) {
-        console.error('Auth getUser error:', authError.message);
-      }
-      user = data?.user ?? null;
-    } catch (authErr) {
-      console.error('Auth guard exception:', authErr);
-    }
+    const geminiError = requireGemini();
+    if (geminiError) return geminiError;
 
-    if (!user) {
-      return NextResponse.json(
-        { error: 'Authentication required. Please sign in.' },
-        { status: 401 }
-      );
-    }
-
-    // Accept PDF, phase1, and answers directly from the client
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
     const phase1Raw = formData.get('phase1') as string | null;
@@ -69,12 +51,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Read PDF as base64
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const base64PDF = buffer.toString('base64');
 
-    // Call Gemini Phase 2
     const solution = await solveCaseWithContext(base64PDF, phase1, clarifyingAnswers);
 
     return NextResponse.json({ solution });

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import type { Phase1Result, Phase2Solution } from '@/types/case';
+import type { Phase1Result, Phase2Solution, RootCause, ExhibitAnalysis, StrategicPillar, RiskMitigation, KeyCalculation } from '@/types/case';
 import SectionCard from './SectionCard';
 import DriverTree from './DriverTree';
 import ExhibitInsight from './ExhibitInsight';
@@ -136,7 +136,7 @@ export default function CaseOutput({ phase1, solution }: CaseOutputProps) {
           <div>
             <p className="text-xs font-mono text-red-400 uppercase tracking-wider mb-3">Primary Causes</p>
             <div className="space-y-3">
-              {safeArray(solution.root_cause_analysis?.primary_causes).map((cause: any, i: number) => (
+              {safeArray<RootCause>(solution.root_cause_analysis?.primary_causes).map((cause, i) => (
                 <div key={i} className="bg-white/[0.02] border border-white/[0.06] rounded-lg p-4">
                   <div className="flex items-start justify-between gap-3 mb-2">
                     <p className="text-white font-medium">{typeof cause === 'string' ? cause : cause.cause}</p>
@@ -194,16 +194,16 @@ export default function CaseOutput({ phase1, solution }: CaseOutputProps) {
       </SectionCard>
 
       {/* 5. Exhibit Analysis */}
-      {safeArray(solution.exhibit_analysis).length > 0 && (
+      {safeArray<ExhibitAnalysis>(solution.exhibit_analysis).length > 0 && (
         <SectionCard
           id="section-exhibits"
           icon="📊"
           title="Exhibit Analysis"
-          subtitle={`${safeArray(solution.exhibit_analysis).length} exhibit${safeArray(solution.exhibit_analysis).length > 1 ? 's' : ''} analyzed`}
+          subtitle={`${safeArray<ExhibitAnalysis>(solution.exhibit_analysis).length} exhibit${safeArray<ExhibitAnalysis>(solution.exhibit_analysis).length > 1 ? 's' : ''} analyzed`}
           accentColor="#06b6d4"
         >
           <div className="space-y-4">
-            {safeArray(solution.exhibit_analysis).map((exhibit: any, i: number) => (
+            {safeArray<ExhibitAnalysis>(solution.exhibit_analysis).map((exhibit, i) => (
               <ExhibitInsight key={i} exhibit={exhibit} />
             ))}
           </div>
@@ -224,7 +224,7 @@ export default function CaseOutput({ phase1, solution }: CaseOutputProps) {
           </div>
 
           {/* Pillars */}
-          {safeArray(solution.solution?.strategic_pillars).map((pillar: any, i: number) => (
+          {safeArray<StrategicPillar>(solution.solution?.strategic_pillars).map((pillar, i) => (
             <div key={i} className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
               <div className="flex items-start justify-between gap-3 mb-3">
                 <div>
@@ -299,7 +299,7 @@ export default function CaseOutput({ phase1, solution }: CaseOutputProps) {
           accentColor="#f59e0b"
         >
           <div className="space-y-3">
-            {safeArray(solution.solution?.risks_and_mitigations).map((rm: any, i: number) => (
+            {safeArray<RiskMitigation>(solution.solution?.risks_and_mitigations).map((rm, i) => (
               <div key={i} className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="px-4 py-3 bg-red-500/5 border border-red-500/10 rounded-lg">
                   <p className="text-xs font-mono text-red-400 mb-1">Risk</p>
@@ -326,7 +326,7 @@ export default function CaseOutput({ phase1, solution }: CaseOutputProps) {
           accentColor="#8b5cf6"
         >
           <div className="space-y-4">
-            {safeArray(solution.quantitative_summary?.key_calculations).map((calc: any, i: number) => (
+            {safeArray<KeyCalculation>(solution.quantitative_summary?.key_calculations).map((calc, i) => (
               <div key={i} className="bg-white/[0.02] border border-white/[0.06] rounded-lg p-4">
                 <p className="text-white font-medium mb-2">{typeof calc === 'string' ? calc : calc.label}</p>
                 {typeof calc !== 'string' && (

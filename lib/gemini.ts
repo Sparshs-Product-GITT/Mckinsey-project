@@ -9,6 +9,21 @@ import { parseJsonResponse } from './caseParser';
 let _phase1Model: GenerativeModel | null = null;
 let _phase2Model: GenerativeModel | null = null;
 
+/** Override via GEMINI_MODEL in .env.local if Google deprecates the default */
+const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-3.6-flash';
+const FALLBACK_GEMINI_MODEL = process.env.GEMINI_MODEL_FALLBACK ?? 'gemini-3.5-flash-lite';
+
+function createModel(modelName: string, maxOutputTokens: number): GenerativeModel {
+  return getGenAI().getGenerativeModel({
+    model: modelName,
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens,
+      responseMimeType: 'application/json',
+    },
+  });
+}
+
 function getGenAI(): GoogleGenerativeAI {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -23,14 +38,7 @@ function getGenAI(): GoogleGenerativeAI {
 /** Phase 1 model — smaller output, fast analysis */
 function getPhase1Model(): GenerativeModel {
   if (!_phase1Model) {
-    _phase1Model = getGenAI().getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 16384,
-        responseMimeType: 'application/json',
-      },
-    });
+    _phase1Model = createModel(DEFAULT_GEMINI_MODEL, 16384);
   }
   return _phase1Model;
 }
@@ -38,14 +46,7 @@ function getPhase1Model(): GenerativeModel {
 /** Phase 2 model — large output for comprehensive solutions */
 function getPhase2Model(): GenerativeModel {
   if (!_phase2Model) {
-    _phase2Model = getGenAI().getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 65536,
-        responseMimeType: 'application/json',
-      },
-    });
+    _phase2Model = createModel(DEFAULT_GEMINI_MODEL, 32768);
   }
   return _phase2Model;
 }
@@ -92,10 +93,10 @@ function classifyAndThrow(err: unknown): never {
     );
   }
 
-  // Model not found
-  if (lower.includes('404') || lower.includes('not found')) {
+  // Model not found / deprecated
+  if (lower.includes('404') || lower.includes('not found') || lower.includes('no longer available')) {
     throw new GeminiUserError(
-      'AI model configuration error. Please contact support.',
+      `Gemini model "${DEFAULT_GEMINI_MODEL}" is unavailable. Set GEMINI_MODEL in .env.local (e.g. gemini-3.6-flash).`,
       { statusCode: 500 }
     );
   }
@@ -116,6 +117,19 @@ function classifyAndThrow(err: unknown): never {
     );
   }
 
+  // Temporary overload (503)
+  if (
+    lower.includes('503') ||
+    lower.includes('service unavailable') ||
+    lower.includes('high demand') ||
+    lower.includes('overloaded')
+  ) {
+    throw new GeminiUserError(
+      'The AI service is temporarily overloaded. Please wait 30 seconds and try again.',
+      { statusCode: 503, isRateLimit: true }
+    );
+  }
+
   // Generic fallback
   throw new GeminiUserError(
     'An error occurred while processing your case. Please try again.',
@@ -124,14 +138,14 @@ function classifyAndThrow(err: unknown): never {
 }
 
 /**
- * Call Gemini with automatic retry + exponential backoff for transient 429 errors.
+ * Call Gemini with automatic retry + exponential backoff for transient errors.
  * Quota exhaustion errors are NOT retried (they won't resolve by waiting seconds).
  */
 async function callWithRetry(
   model: GenerativeModel,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   parts: any[],
-  maxRetries = 2
+  maxRetries = 3
 ) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -148,21 +162,52 @@ async function callWithRetry(
         !lower.includes('quota') &&
         !lower.includes('exceeded');
 
-      if (isTransientRateLimit && attempt < maxRetries) {
-        // Exponential backoff: 2s, 8s
-        const delay = Math.pow(4, attempt) * 2000;
-        console.warn(`Gemini rate limited (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms...`);
+      const isTransientOverload =
+        lower.includes('503') ||
+        lower.includes('service unavailable') ||
+        lower.includes('high demand') ||
+        lower.includes('overloaded');
+
+      if ((isTransientRateLimit || isTransientOverload) && attempt < maxRetries) {
+        const delay = Math.pow(3, attempt) * 2000;
+        console.warn(
+          `Gemini transient error (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms...`
+        );
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }
 
-      // Not retryable or out of retries — classify and throw user-friendly error
       classifyAndThrow(err);
     }
   }
 
-  // Should never reach here, but just in case
   throw new GeminiUserError('Failed to get a response from the AI after multiple attempts.');
+}
+
+async function callWithModelFallback(
+  parts: Parameters<typeof callWithRetry>[1],
+  maxOutputTokens: number
+) {
+  try {
+    return await callWithRetry(getPhase2Model(), parts, 3);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const lower = message.toLowerCase();
+    const isOverload =
+      (err instanceof GeminiUserError && err.isRateLimit) ||
+      lower.includes('503') ||
+      lower.includes('service unavailable') ||
+      lower.includes('high demand') ||
+      lower.includes('overloaded');
+
+    if (isOverload && FALLBACK_GEMINI_MODEL !== DEFAULT_GEMINI_MODEL) {
+      console.warn(`[Gemini] Falling back to ${FALLBACK_GEMINI_MODEL} for Phase 2`);
+      const fallbackModel = createModel(FALLBACK_GEMINI_MODEL, maxOutputTokens);
+      return callWithRetry(fallbackModel, parts, 2);
+    }
+
+    throw err;
+  }
 }
 
 // ------------------------------------------------
@@ -367,15 +412,15 @@ export async function solveCaseWithContext(
     },
   };
 
-  const result = await callWithRetry(getPhase2Model(), [pdfPart, { text: prompt }]);
+  const result = await callWithModelFallback([pdfPart, { text: prompt }], 32768);
   const text = result.response.text();
   const parsed = parseJsonResponse<Phase2Solution>(text);
 
   if (!parsed) {
-    const retry = await callWithRetry(getPhase2Model(), [
-      pdfPart,
-      { text: prompt + '\n\nCRITICAL: Return ONLY valid JSON. No markdown code fences, no explanation text.' },
-    ]);
+    const retry = await callWithModelFallback(
+      [pdfPart, { text: prompt + '\n\nCRITICAL: Return ONLY valid JSON. No markdown code fences, no explanation text.' }],
+      32768
+    );
     const retryParsed = parseJsonResponse<Phase2Solution>(retry.response.text());
     if (!retryParsed) {
       throw new GeminiUserError('Failed to parse the AI solution. Please try again.');

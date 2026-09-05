@@ -4,6 +4,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import ClarifyingQA from '@/components/ClarifyingQA';
 import CaseOutput from '@/components/CaseOutput';
+import { getApiError } from '@/lib/apiClient';
+import { loadCase } from '@/lib/caseStorage';
 import type { Phase1Result, Phase2Solution, ClarifyingAnswer } from '@/types/case';
 
 type PageState = 'loading' | 'clarifying' | 'solving' | 'solved' | 'error';
@@ -18,46 +20,44 @@ export default function CasePage() {
   const [solution, setSolution] = useState<Phase2Solution | null>(null);
   const [error, setError] = useState('');
 
-  // Store PDF base64 in a ref to avoid re-renders (can be large)
-  const pdfBase64Ref = useRef<string>('');
+  const pdfFileRef = useRef<File | null>(null);
+  const lastAnswersRef = useRef<ClarifyingAnswer[] | null>(null);
 
   useEffect(() => {
-    // Load phase1 and PDF data from sessionStorage
-    const phase1Cached = sessionStorage.getItem(`case-${caseId}-phase1`);
-    const pdfCached = sessionStorage.getItem(`case-${caseId}-pdf`);
+    loadCase(caseId)
+      .then((data) => {
+        if (!data) {
+          setError('Session not found. Please upload a new case brief.');
+          setState('error');
+          return;
+        }
 
-    if (phase1Cached && pdfCached) {
-      try {
-        const parsed = JSON.parse(phase1Cached) as Phase1Result;
-        setPhase1(parsed);
-        pdfBase64Ref.current = pdfCached;
+        setPhase1(data.phase1);
+        pdfFileRef.current = new File([data.pdfBlob], 'case.pdf', {
+          type: 'application/pdf',
+        });
         setState('clarifying');
-      } catch {
+      })
+      .catch(() => {
         setError('Failed to load case data. Please re-upload.');
         setState('error');
-      }
-    } else {
-      setError('Session not found. Please upload a new case brief.');
-      setState('error');
-    }
+      });
   }, [caseId]);
 
   const handleClarifyComplete = async (answers: ClarifyingAnswer[]) => {
+    lastAnswersRef.current = answers;
     setState('solving');
 
-    try {
-      // Convert base64 back to a File to send via FormData
-      const binaryString = atob(pdfBase64Ref.current);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      const blob = new Blob([bytes], { type: 'application/pdf' });
-      const file = new File([blob], 'case.pdf', { type: 'application/pdf' });
+    const pdfFile = pdfFileRef.current;
+    if (!pdfFile) {
+      setError('PDF file not found. Please re-upload the case.');
+      setState('error');
+      return;
+    }
 
-      // Build FormData with PDF + phase1 + answers
+    try {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', pdfFile);
       formData.append('phase1', JSON.stringify(phase1));
       formData.append('clarifyingAnswers', JSON.stringify(answers));
 
@@ -67,8 +67,7 @@ export default function CasePage() {
       });
 
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to generate solution');
+        throw new Error(await getApiError(response, 'Failed to generate solution'));
       }
 
       const data = await response.json();
@@ -118,7 +117,6 @@ export default function CasePage() {
       </header>
 
       <div className="relative z-10 max-w-5xl mx-auto px-6 py-8">
-        {/* Loading state */}
         {state === 'loading' && (
           <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
             <div className="w-12 h-12 rounded-2xl bg-[#c9a84c]/10 flex items-center justify-center animate-pulse">
@@ -130,7 +128,6 @@ export default function CasePage() {
           </div>
         )}
 
-        {/* Error state */}
         {state === 'error' && (
           <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
             <div className="w-12 h-12 rounded-2xl bg-red-500/10 flex items-center justify-center">
@@ -138,20 +135,28 @@ export default function CasePage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
               </svg>
             </div>
-            <p className="text-red-400 text-sm">{error}</p>
-            <button
-              onClick={() => router.push('/')}
-              className="mt-2 px-4 py-2 bg-white/[0.05] hover:bg-white/[0.08] text-white text-sm rounded-lg transition-colors border border-white/[0.08]"
-            >
-              Upload New Case
-            </button>
+            <p className="text-red-400 text-sm text-center max-w-md">{error}</p>
+            <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
+              {phase1 && pdfFileRef.current && lastAnswersRef.current && (
+                <button
+                  onClick={() => handleClarifyComplete(lastAnswersRef.current!)}
+                  className="px-4 py-2 bg-gradient-to-r from-[#c9a84c] to-[#e8d48b] text-[#0a0f1e] text-sm rounded-lg font-medium hover:shadow-lg hover:shadow-[#c9a84c]/20 transition-all"
+                >
+                  Try Again
+                </button>
+              )}
+              <button
+                onClick={() => router.push('/')}
+                className="px-4 py-2 bg-white/[0.05] hover:bg-white/[0.08] text-white text-sm rounded-lg transition-colors border border-white/[0.08]"
+              >
+                Upload New Case
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Clarifying Questions */}
         {state === 'clarifying' && phase1 && (
           <div className="animate-fade-in-up">
-            {/* Case brief header */}
             <div className="mb-8">
               <h2 className="font-heading text-2xl md:text-3xl font-bold text-white mb-2">
                 {phase1.case_title || 'Case Analysis'}
@@ -160,7 +165,6 @@ export default function CasePage() {
                 {phase1.client_name} · {phase1.industry} · {phase1.geography}
               </p>
 
-              {/* Initial hypotheses */}
               {phase1.initial_hypotheses?.length > 0 && (
                 <div className="mt-6 p-4 bg-white/[0.02] border border-white/[0.06] rounded-xl">
                   <p className="text-xs font-mono text-[#c9a84c] uppercase tracking-wider mb-2">Initial Hypotheses</p>
@@ -176,7 +180,6 @@ export default function CasePage() {
               )}
             </div>
 
-            {/* Section title */}
             <div className="mb-6">
               <p className="text-xs font-mono text-[#8896ab] uppercase tracking-wider mb-1">Phase 2</p>
               <h3 className="text-xl font-heading text-white font-semibold">Clarifying Questions</h3>
@@ -192,7 +195,6 @@ export default function CasePage() {
           </div>
         )}
 
-        {/* Solving state */}
         {state === 'solving' && (
           <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
             <div className="relative">
@@ -225,10 +227,8 @@ export default function CasePage() {
           </div>
         )}
 
-        {/* Solution */}
         {state === 'solved' && phase1 && solution && (
           <div className="animate-fade-in-up">
-            {/* Solution header */}
             <div className="mb-8">
               <div className="flex items-center gap-2 mb-2">
                 <span className="px-2.5 py-1 rounded-md text-xs font-mono bg-emerald-500/15 text-emerald-400">
@@ -243,12 +243,10 @@ export default function CasePage() {
               </p>
             </div>
 
-            {/* Solution sections */}
             <div className="stagger-children">
               <CaseOutput phase1={phase1} solution={solution} />
             </div>
 
-            {/* Back to top / New case */}
             <div className="mt-12 flex items-center justify-center gap-4">
               <button
                 onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}

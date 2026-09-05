@@ -2,10 +2,11 @@
 
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
+import { getApiError } from '@/lib/apiClient';
 import type { Phase1Result } from '@/types/case';
 
 interface UploadZoneProps {
-  onUploadComplete: (phase1: Phase1Result, pdfBase64: string) => void;
+  onUploadComplete: (phase1: Phase1Result, pdfFile: File) => void;
   onError: (error: string) => void;
 }
 
@@ -19,7 +20,6 @@ export default function UploadZone({ onUploadComplete, onError }: UploadZoneProp
       const file = acceptedFiles[0];
       if (!file) return;
 
-      // Client-side validation
       if (file.type !== 'application/pdf') {
         onError('Please upload a PDF file.');
         return;
@@ -39,7 +39,6 @@ export default function UploadZone({ onUploadComplete, onError }: UploadZoneProp
         const formData = new FormData();
         formData.append('file', file);
 
-        // Simulate progress stages
         setProgress(20);
         const progressInterval = setInterval(() => {
           setProgress((prev) => (prev < 85 ? prev + Math.random() * 8 : prev));
@@ -53,23 +52,15 @@ export default function UploadZone({ onUploadComplete, onError }: UploadZoneProp
         clearInterval(progressInterval);
 
         if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || 'Upload failed');
+          throw new Error(await getApiError(response, 'Upload failed'));
         }
 
         setProgress(95);
         const data = await response.json();
         setProgress(100);
 
-        // Convert file to base64 for Phase 2 later
-        const arrayBuffer = await file.arrayBuffer();
-        const base64 = btoa(
-          new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-        );
-
-        // Brief pause to show 100%
         setTimeout(() => {
-          onUploadComplete(data.phase1, base64);
+          onUploadComplete(data.phase1, file);
         }, 500);
       } catch (err) {
         setUploading(false);
@@ -100,7 +91,6 @@ export default function UploadZone({ onUploadComplete, onError }: UploadZoneProp
 
         {uploading ? (
           <div className="flex flex-col items-center gap-5 py-4">
-            {/* Animated document icon */}
             <div className="relative">
               <div className="w-16 h-16 rounded-2xl bg-[#c9a84c]/10 flex items-center justify-center animate-pulse">
                 <svg className="w-8 h-8 text-[#c9a84c]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -122,7 +112,6 @@ export default function UploadZone({ onUploadComplete, onError }: UploadZoneProp
               </p>
             </div>
 
-            {/* Progress bar */}
             <div className="w-full max-w-xs h-1.5 bg-white/5 rounded-full overflow-hidden">
               <div
                 className="h-full bg-gradient-to-r from-[#c9a84c] to-[#e8d48b] rounded-full transition-all duration-500 ease-out"
@@ -133,7 +122,6 @@ export default function UploadZone({ onUploadComplete, onError }: UploadZoneProp
           </div>
         ) : (
           <div className="flex flex-col items-center gap-5 py-4">
-            {/* Upload icon */}
             <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center group-hover:bg-[#c9a84c]/10 group-hover:border-[#c9a84c]/20 transition-all duration-300">
               <svg
                 className="w-8 h-8 text-[#8896ab] group-hover:text-[#c9a84c] transition-colors duration-300"

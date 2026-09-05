@@ -1,10 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import UploadZone from '@/components/UploadZone';
-import { createClient } from '@/lib/supabase/client';
-import type { User } from '@supabase/supabase-js';
+import { saveCase } from '@/lib/caseStorage';
 import type { Phase1Result } from '@/types/case';
 
 const CASE_TYPES = [
@@ -15,94 +14,51 @@ const CASE_TYPES = [
   { label: 'Growth Strategy', icon: '📈', color: 'border-amber-500/20 text-amber-400 bg-amber-500/5' },
 ];
 
+interface HealthStatus {
+  gemini: boolean;
+  missing: string[];
+}
+
 export default function HomePage() {
   const router = useRouter();
   const [error, setError] = useState('');
-  const [user, setUser] = useState<User | null>(null);
-  const [signingOut, setSigningOut] = useState(false);
+  const [health, setHealth] = useState<HealthStatus | null>(null);
 
   useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setUser(user);
-    });
+    fetch('/api/health')
+      .then((res) => res.json())
+      .then((data: HealthStatus) => setHealth(data))
+      .catch(() => setHealth(null));
   }, []);
 
-  const handleUploadComplete = (phase1: Phase1Result, pdfBase64: string) => {
-    // Generate a client-side ID for the URL
-    const caseId = crypto.randomUUID();
+  const handleUploadComplete = useCallback(
+    async (phase1: Phase1Result, pdfFile: File) => {
+      const caseId = crypto.randomUUID();
 
-    // Store both phase1 and the PDF base64 in sessionStorage for the case page
-    sessionStorage.setItem(`case-${caseId}-phase1`, JSON.stringify(phase1));
-    sessionStorage.setItem(`case-${caseId}-pdf`, pdfBase64);
-
-    router.push(`/case/${caseId}`);
-  };
-
-  const handleSignOut = async () => {
-    setSigningOut(true);
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push('/login');
-  };
+      try {
+        await saveCase(caseId, { phase1, pdfBlob: pdfFile });
+        router.push(`/case/${caseId}`);
+      } catch {
+        setError('Failed to save case data locally. Please try uploading again.');
+      }
+    },
+    [router]
+  );
 
   return (
     <main className="flex-1 relative overflow-hidden">
-      {/* Background effects */}
       <div className="absolute inset-0 bg-grid pointer-events-none" />
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-[#c9a84c]/[0.03] rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute bottom-0 right-0 w-[500px] h-[400px] bg-[#3b82f6]/[0.03] rounded-full blur-[100px] pointer-events-none" />
 
-      {/* User header bar */}
-      {user && (
-        <div className="absolute top-0 left-0 right-0 z-20">
-          <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#c9a84c] to-[#e8d48b] flex items-center justify-center">
-                <svg className="w-4 h-4 text-[#0a0f1e]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-              </div>
-              <span className="font-mono text-xs text-[#c9a84c] tracking-widest uppercase hidden sm:inline">CaseCoach AI</span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {/* User info */}
-              <div className="flex items-center gap-2.5 px-3 py-1.5 bg-white/[0.03] border border-white/[0.06] rounded-full">
-                {user.user_metadata?.avatar_url ? (
-                  <img
-                    src={user.user_metadata.avatar_url}
-                    alt=""
-                    className="w-6 h-6 rounded-full"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <div className="w-6 h-6 rounded-full bg-[#c9a84c]/20 flex items-center justify-center">
-                    <span className="text-xs text-[#c9a84c] font-medium">
-                      {(user.email?.[0] || 'U').toUpperCase()}
-                    </span>
-                  </div>
-                )}
-                <span className="text-sm text-[#8896ab] hidden sm:inline max-w-[160px] truncate">
-                  {user.user_metadata?.full_name || user.email}
-                </span>
-              </div>
-
-              {/* Sign out button */}
-              <button
-                onClick={handleSignOut}
-                disabled={signingOut}
-                className="px-3 py-1.5 text-xs font-mono text-[#8896ab] hover:text-white bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] hover:border-white/[0.1] rounded-full transition-all duration-200 cursor-pointer disabled:opacity-50"
-              >
-                {signingOut ? 'Signing out...' : 'Sign out'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-6 py-20">
-        {/* Logo / Brand */}
+        {health && !health.gemini && (
+          <div className="w-full max-w-2xl mb-6 px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-400 text-center animate-fade-in-up">
+            Server not fully configured. Missing: {health.missing.join(', ')}. See{' '}
+            <code className="font-mono text-xs">.env.example</code>.
+          </div>
+        )}
+
         <div className="animate-fade-in-up mb-12 text-center">
           <div className="flex items-center justify-center gap-2 mb-6">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#c9a84c] to-[#e8d48b] flex items-center justify-center">
@@ -124,7 +80,6 @@ export default function HomePage() {
           </p>
         </div>
 
-        {/* Upload Zone */}
         <div className="animate-fade-in-up w-full max-w-2xl" style={{ animationDelay: '0.15s' }}>
           <UploadZone
             onUploadComplete={handleUploadComplete}
@@ -132,14 +87,12 @@ export default function HomePage() {
           />
         </div>
 
-        {/* Error message */}
         {error && (
           <div className="mt-4 px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 animate-fade-in-up">
             {error}
           </div>
         )}
 
-        {/* Case type chips */}
         <div className="mt-10 animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
           <p className="text-xs font-mono text-[#8896ab]/50 text-center mb-3 uppercase tracking-wider">
             Supported case types
@@ -157,7 +110,6 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* How it works */}
         <div className="mt-16 max-w-3xl w-full animate-fade-in-up" style={{ animationDelay: '0.45s' }}>
           <p className="text-xs font-mono text-[#8896ab]/50 text-center mb-6 uppercase tracking-wider">
             How it works
@@ -198,7 +150,6 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Footer */}
         <div className="mt-16 text-center">
           <p className="text-xs text-[#8896ab]/30 font-mono">
             Powered by Gemini AI · Built for case interview preparation
