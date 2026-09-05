@@ -54,7 +54,19 @@ This app runs as a **Render Web Service** (Node.js, not serverless), so long Gem
 1. Push this repo to GitHub and connect GitHub in the [Render dashboard](https://dashboard.render.com).
 2. **New + → Blueprint** → select the repo. Render reads [`render.yaml`](render.yaml).
 3. Set **`GEMINI_API_KEY`** in the Render environment when prompted (never commit secrets).
-4. After deploy, verify `GET /api/health` returns `"gemini": true`.
+4. After deploy, verify `GET /api/health` returns `"ok": true`.
+
+**Required env vars on Render:**
+
+| Variable | Purpose |
+|----------|---------|
+| `GEMINI_API_KEY` | Google Gemini API |
+| `UPSTASH_REDIS_REST_URL` | Session store + rate limiting |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash auth |
+| `TURNSTILE_SECRET_KEY` | Bot protection (server) |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Bot protection (client widget) |
+
+**Optional:** `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST` for analytics.
 
 **Free tier notes:** The service spins down after ~15 minutes of idle traffic. The first visit after idle may take 30–60 seconds to wake up. Phase 1 and Phase 2 can each take up to ~2 minutes on a live case.
 

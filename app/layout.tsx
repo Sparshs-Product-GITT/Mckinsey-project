@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Lato, DM_Mono } from "next/font/google";
+import AnalyticsProvider from "@/components/AnalyticsProvider";
 import "./globals.css";
 
 const playfair = Playfair_Display({
@@ -47,7 +48,7 @@ export default function RootLayout({
       className={`${playfair.variable} ${lato.variable} ${dmMono.variable} dark h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-[#0a0f1e] text-white font-body">
-        {children}
+        <AnalyticsProvider>{children}</AnalyticsProvider>
       </body>
     </html>
   );

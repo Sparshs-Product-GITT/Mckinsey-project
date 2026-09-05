@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import UploadZone from '@/components/UploadZone';
 import { saveCase } from '@/lib/caseStorage';
@@ -14,27 +15,21 @@ const CASE_TYPES = [
   { label: 'Growth Strategy', icon: '📈', color: 'border-amber-500/20 text-amber-400 bg-amber-500/5' },
 ];
 
-interface HealthStatus {
-  gemini: boolean;
-  missing: string[];
-}
-
 export default function HomePage() {
   const router = useRouter();
   const [error, setError] = useState('');
-  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [serviceOk, setServiceOk] = useState(true);
+  const [confirmed, setConfirmed] = useState(false);
 
-  useEffect(() => {
+  React.useEffect(() => {
     fetch('/api/health')
       .then((res) => res.json())
-      .then((data: HealthStatus) => setHealth(data))
-      .catch(() => setHealth(null));
+      .then((data: { ok?: boolean }) => setServiceOk(data.ok !== false))
+      .catch(() => setServiceOk(false));
   }, []);
 
   const handleUploadComplete = useCallback(
-    async (phase1: Phase1Result, pdfFile: File) => {
-      const caseId = crypto.randomUUID();
-
+    async (phase1: Phase1Result, pdfFile: File, caseId: string) => {
       try {
         await saveCase(caseId, { phase1, pdfBlob: pdfFile });
         router.push(`/case/${caseId}`);
@@ -52,10 +47,9 @@ export default function HomePage() {
       <div className="absolute bottom-0 right-0 w-[500px] h-[400px] bg-[#3b82f6]/[0.03] rounded-full blur-[100px] pointer-events-none" />
 
       <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-6 py-20">
-        {health && !health.gemini && (
+        {!serviceOk && (
           <div className="w-full max-w-2xl mb-6 px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-400 text-center animate-fade-in-up">
-            Server not fully configured. Missing: {health.missing.join(', ')}. See{' '}
-            <code className="font-mono text-xs">.env.example</code>.
+            Service is temporarily unavailable. Please try again later.
           </div>
         )}
 
@@ -80,10 +74,26 @@ export default function HomePage() {
           </p>
         </div>
 
+        <label className="animate-fade-in-up w-full max-w-2xl mb-4 flex items-start gap-3 px-1 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(e) => setConfirmed(e.target.checked)}
+            className="mt-1 rounded border-white/20 bg-white/5 text-[#c9a84c] focus:ring-[#c9a84c]"
+          />
+          <span className="text-sm text-[#8896ab]">
+            I confirm this PDF is not confidential or proprietary.{' '}
+            <Link href="/privacy" className="text-[#c9a84c] hover:underline">
+              Privacy policy
+            </Link>
+          </span>
+        </label>
+
         <div className="animate-fade-in-up w-full max-w-2xl" style={{ animationDelay: '0.15s' }}>
           <UploadZone
             onUploadComplete={handleUploadComplete}
             onError={(msg) => setError(msg)}
+            disabled={!confirmed}
           />
         </div>
 
@@ -150,10 +160,13 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div className="mt-16 text-center">
+        <div className="mt-16 text-center space-y-2">
           <p className="text-xs text-[#8896ab]/30 font-mono">
             Powered by Gemini AI · Built for case interview preparation
           </p>
+          <Link href="/privacy" className="text-xs text-[#8896ab]/50 hover:text-[#8896ab] transition-colors">
+            Privacy Policy
+          </Link>
         </div>
       </div>
     </main>

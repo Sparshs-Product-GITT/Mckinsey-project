@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import ClarifyingQA from '@/components/ClarifyingQA';
 import CaseOutput from '@/components/CaseOutput';
 import { getApiError } from '@/lib/apiClient';
+import { trackEvent } from '@/lib/analytics';
 import { loadCase } from '@/lib/caseStorage';
 import type { Phase1Result, Phase2Solution, ClarifyingAnswer } from '@/types/case';
 
@@ -58,8 +59,13 @@ export default function CasePage() {
     try {
       const formData = new FormData();
       formData.append('file', pdfFile);
-      formData.append('phase1', JSON.stringify(phase1));
+      formData.append('caseId', caseId);
       formData.append('clarifyingAnswers', JSON.stringify(answers));
+      if (phase1) {
+        formData.append('phase1', JSON.stringify(phase1));
+      }
+
+      trackEvent('phase2_started');
 
       const response = await fetch('/api/clarify', {
         method: 'POST',
@@ -67,12 +73,14 @@ export default function CasePage() {
       });
 
       if (!response.ok) {
+        trackEvent('phase2_error', { status: response.status });
         throw new Error(await getApiError(response, 'Failed to generate solution'));
       }
 
       const data = await response.json();
       setSolution(data.solution);
       setState('solved');
+      trackEvent('phase2_success');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
       setState('error');

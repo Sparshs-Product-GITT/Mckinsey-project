@@ -1,19 +1,26 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
+import { Turnstile, type TurnstileInstance } from '@marsidev/react-turnstile';
 import { getApiError } from '@/lib/apiClient';
+import { trackEvent } from '@/lib/analytics';
 import type { Phase1Result } from '@/types/case';
 
 interface UploadZoneProps {
-  onUploadComplete: (phase1: Phase1Result, pdfFile: File) => void;
+  onUploadComplete: (phase1: Phase1Result, pdfFile: File, caseId: string) => void;
   onError: (error: string) => void;
+  disabled?: boolean;
 }
 
-export default function UploadZone({ onUploadComplete, onError }: UploadZoneProps) {
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+
+export default function UploadZone({ onUploadComplete, onError, disabled = false }: UploadZoneProps) {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [fileName, setFileName] = useState('');
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const turnstileRef = useRef<TurnstileInstance>(null);
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
@@ -31,13 +38,22 @@ export default function UploadZone({ onUploadComplete, onError }: UploadZoneProp
         return;
       }
 
+      if (TURNSTILE_SITE_KEY && !turnstileToken) {
+        onError('Please complete the bot verification check below.');
+        return;
+      }
+
       setFileName(file.name);
       setUploading(true);
       setProgress(10);
+      trackEvent('upload_started');
 
       try {
         const formData = new FormData();
         formData.append('file', file);
+        if (turnstileToken) {
+          formData.append('turnstileToken', turnstileToken);
+        }
 
         setProgress(20);
         const progressInterval = setInterval(() => {
@@ -52,40 +68,44 @@ export default function UploadZone({ onUploadComplete, onError }: UploadZoneProp
         clearInterval(progressInterval);
 
         if (!response.ok) {
+          trackEvent('phase1_error', { status: response.status });
           throw new Error(await getApiError(response, 'Upload failed'));
         }
 
         setProgress(95);
         const data = await response.json();
         setProgress(100);
+        trackEvent('phase1_success');
 
         setTimeout(() => {
-          onUploadComplete(data.phase1, file);
+          onUploadComplete(data.phase1, file, data.caseId);
         }, 500);
       } catch (err) {
         setUploading(false);
         setProgress(0);
+        turnstileRef.current?.reset();
+        setTurnstileToken(null);
         onError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
       }
     },
-    [onUploadComplete, onError]
+    [onUploadComplete, onError, turnstileToken]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: { 'application/pdf': ['.pdf'] },
     maxFiles: 1,
-    disabled: uploading,
+    disabled: uploading || disabled,
   });
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className="w-full max-w-2xl mx-auto space-y-4">
       <div
         {...getRootProps()}
         id="upload-dropzone"
         className={`upload-zone relative ${
           isDragActive ? 'upload-zone-active' : ''
-        } ${uploading ? 'pointer-events-none' : 'cursor-pointer'}`}
+        } ${uploading || disabled ? 'pointer-events-none opacity-60' : 'cursor-pointer'}`}
       >
         <input {...getInputProps()} />
 
@@ -156,6 +176,18 @@ export default function UploadZone({ onUploadComplete, onError }: UploadZoneProp
           </div>
         )}
       </div>
+
+      {TURNSTILE_SITE_KEY && (
+        <div className="flex justify-center">
+          <Turnstile
+            ref={turnstileRef}
+            siteKey={TURNSTILE_SITE_KEY}
+            onSuccess={setTurnstileToken}
+            onExpire={() => setTurnstileToken(null)}
+            options={{ theme: 'dark', size: 'normal' }}
+          />
+        </div>
+      )}
     </div>
   );
 }

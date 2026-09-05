@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireGemini } from '@/lib/apiGuard';
+import { getClientIp, sanitizeErrorForLog } from '@/lib/apiHelpers';
+import { checkRateLimit } from '@/lib/rateLimit';
+import { savePhase1Session } from '@/lib/sessionStore';
+import { verifyTurnstileToken } from '@/lib/turnstile';
+import { validatePdfBuffer } from '@/lib/validatePdf';
 import { analyzeCase } from '@/lib/gemini';
 
 export const maxDuration = 120;
@@ -10,8 +15,17 @@ export async function POST(req: NextRequest) {
     const geminiError = requireGemini();
     if (geminiError) return geminiError;
 
+    const rateLimitError = await checkRateLimit(req, 'analyze');
+    if (rateLimitError) return rateLimitError;
+
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
+    const turnstileToken = formData.get('turnstileToken') as string | null;
+
+    const turnstileResult = await verifyTurnstileToken(turnstileToken, getClientIp(req));
+    if (!turnstileResult.ok) {
+      return NextResponse.json({ error: turnstileResult.error }, { status: 403 });
+    }
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
@@ -28,13 +42,21 @@ export async function POST(req: NextRequest) {
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+
+    const pdfCheck = validatePdfBuffer(buffer);
+    if (!pdfCheck.ok) {
+      return NextResponse.json({ error: pdfCheck.error }, { status: 400 });
+    }
+
     const base64PDF = buffer.toString('base64');
-
     const phase1 = await analyzeCase(base64PDF);
+    const caseId = crypto.randomUUID();
 
-    return NextResponse.json({ phase1 });
+    await savePhase1Session(caseId, phase1);
+
+    return NextResponse.json({ phase1, caseId });
   } catch (error) {
-    console.error('Analyze case error:', error);
+    console.error('Analyze case error:', sanitizeErrorForLog(error));
 
     const isGeminiError = error instanceof Error && error.name === 'GeminiUserError';
     const statusCode = isGeminiError && 'statusCode' in error ? (error as { statusCode: number }).statusCode : 500;
